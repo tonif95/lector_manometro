@@ -10,10 +10,11 @@ def get_pressure_reading(image_path, output_path=None):
     """
     
     # --- 1. CONFIGURACIÓN Y CALIBRACIÓN DEL MANÓMETRO ---
+    # AJUSTA ESTOS VALORES HASTA QUE LAS LÍNEAS MAGENTA Y AMARILLA COINCIDAN
     MIN_VALUE = 0
     MAX_VALUE = 25
-    START_ANGLE = 210
-    END_ANGLE = 330
+    START_ANGLE = 135# Ángulo para la marca del 0 (línea magenta)
+    END_ANGLE = 50   # Ángulo para la marca del 25 (línea amarilla)
     
     # --- 2. CARGA Y PREPROCESAMIENTO DE LA IMAGEN ---
     img_orig = cv2.imread(image_path)
@@ -25,7 +26,7 @@ def get_pressure_reading(image_path, output_path=None):
     gray = cv2.cvtColor(img_orig, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (15, 15), 0)
 
-    # --- 3. DETECCIÓN DEL CÍRCULO (CARA DEL MANÓMETRO) ---
+    # --- 3. DETECCIÓN DEL CÍRCULO Y DIBUJO DE GUÍAS ---
     detected_circles = cv2.HoughCircles(blurred,
                                        cv2.HOUGH_GRADIENT,
                                        dp=1,
@@ -42,8 +43,26 @@ def get_pressure_reading(image_path, output_path=None):
     circle = np.uint16(np.around(detected_circles))[0, 0]
     center_x, center_y, radius = circle[0], circle[1], circle[2]
 
+    # Dibuja el círculo del manómetro y su centro
     cv2.circle(img_display, (center_x, center_y), radius, (0, 255, 0), 3)
     cv2.circle(img_display, (center_x, center_y), 5, (0, 0, 255), -1)
+
+    # --- ¡NUEVO! DIBUJAR LÍNEAS DE CALIBRACIÓN DE INICIO Y FIN ---
+    # Convertimos los ángulos a radianes para los cálculos trigonométricos
+    start_angle_rad = math.radians(START_ANGLE)
+    end_angle_rad = math.radians(END_ANGLE)
+
+    # Calculamos el punto final de la línea de INICIO (0)
+    x_start = int(center_x + radius * math.cos(start_angle_rad))
+    y_start = int(center_y + radius * math.sin(start_angle_rad))
+    cv2.line(img_display, (center_x, center_y), (x_start, y_start), (255, 0, 255), 2) # Línea Magenta
+
+    # Calculamos el punto final de la línea de FIN (25)
+    x_end = int(center_x + radius * math.cos(end_angle_rad))
+    y_end = int(center_y + radius * math.sin(end_angle_rad))
+    cv2.line(img_display, (center_x, center_y), (x_end, y_end), (0, 255, 255), 2) # Línea Amarilla
+    # --- FIN DE LA SECCIÓN NUEVA ---
+
 
     # --- 4. DETECCIÓN DE LA AGUJA (LÍNEA) ---
     mask = np.zeros_like(gray)
@@ -57,29 +76,31 @@ def get_pressure_reading(image_path, output_path=None):
 
     if lines is None:
         print("No se detectó ninguna línea (aguja) dentro del círculo.")
+        # Dibuja el texto de error pero muestra la imagen de calibración
+        cv2.putText(img_display, "Aguja no detectada", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        cv2.imshow('Manometro Detectado', img_display)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
         return None
 
-    # --- NUEVA LÓGICA MÁS ROBUSTA PARA ENCONTRAR LA AGUJA ---
-    # Encontraremos la línea cuyo punto medio esté más cerca del centro del círculo.
+    # Lógica para encontrar la línea más larga (la aguja)
     best_line = None
-    min_dist_from_midpoint_to_center = float('inf')
-
+    max_line_length = 0
     for line in lines:
         x1, y1, x2, y2 = line[0]
-        mid_x, mid_y = (x1 + x2) / 2, (y1 + y2) / 2
-        dist = np.sqrt((mid_x - center_x)**2 + (mid_y - center_y)**2)
-        if dist < min_dist_from_midpoint_to_center:
-            min_dist_from_midpoint_to_center = dist
+        length = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+        if length > max_line_length:
+            max_line_length = length
             best_line = (x1, y1, x2, y2)
     
     if best_line is None:
-        # Este error ahora es mucho menos probable que ocurra.
-        print("No se pudo determinar la línea de la aguja con los criterios actuales.")
+        print("No se pudo determinar la línea de la aguja.")
         return None
 
     x1, y1, x2, y2 = best_line
     cv2.line(img_display, (x1, y1), (x2, y2), (255, 0, 0), 2)
     
+    # Lógica para encontrar la punta de la aguja
     dist1_from_center = np.sqrt((x1 - center_x)**2 + (y1 - center_y)**2)
     dist2_from_center = np.sqrt((x2 - center_x)**2 + (y2 - center_y)**2)
 
